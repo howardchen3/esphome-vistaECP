@@ -22,6 +22,12 @@
 #define MONITOR_PIN 14 // pin used to monitor the green TX line (3.3 level dropped from 12 volts
 #endif
 
+extern esphome::globals::RestoringGlobalsComponent<int> *zoneStates;
+extern esphome::globals::RestoringGlobalsComponent<int> *zoneAlarms;
+extern esphome::globals::RestoringGlobalsComponent<int> *zoneBypass;
+extern esphome::globals::RestoringGlobalsComponent<int> *zoneChecks;
+extern esphome::globals::RestoringGlobalsComponent<int> *lrrCode;
+
 Stream * OutputStream = & Serial;
 Vista vista(OutputStream);
 
@@ -51,7 +57,7 @@ enum sysState {
   sarmed
 };
 namespace esphome {
-  class vistaECPHome:  public CustomAPIDevice,public RealTimeClock {
+  class vistaECPHome: public api::CustomAPIDevice, public time::RealTimeClock {
     public: vistaECPHome(char kpaddr = KP_ADDR, int receivePin = RX_PIN, int transmitPin = TX_PIN, int monitorTxPin = MONITOR_PIN): keypadAddr1(kpaddr),
     rxPin(receivePin),
     txPin(transmitPin),
@@ -114,62 +120,43 @@ namespace esphome {
 
     //end panel language definitions
 
-    std:: function < void(int, const char *) > zoneStatusChangeCallback;
-    std:: function < void(int, bool) > zoneStatusChangeBinaryCallback;    
-    std:: function < void(const char * , uint8_t) > systemStatusChangeCallback;
-    std:: function < void(sysState, bool, uint8_t) > statusChangeCallback;
-    std:: function < void(const char * , uint8_t) > systemMsgChangeCallback;
-    std:: function < void(const char * ) > lrrMsgChangeCallback;
-    std:: function < void(const char * ) > rfMsgChangeCallback;
-    std:: function < void(const char * , uint8_t) > line1DisplayCallback;
-    std:: function < void(const char * , uint8_t) > line2DisplayCallback;
-    std:: function < void(std::string, uint8_t) > beepsCallback;
-    std:: function < void(std::string) > zoneExtendedStatusCallback;
-    std:: function < void(uint8_t, int, bool) > relayStatusChangeCallback;
-
-    void onZoneStatusChange(std:: function < void(int zone,
-      const char * msg) > callback) {
-      zoneStatusChangeCallback = callback;
+    void systemStatusChangeCallback(const char *statusCode, uint8_t partition) {
+      if (systemStatuses[partition]) {
+        systemStatuses[partition]->publish_state(statusCode);
     }
-    void onZoneStatusChangeBinarySensor(std:: function < void(int zone,
-      bool open) > callback) {
-      zoneStatusChangeBinaryCallback = callback;
+    };
+    void line1DisplayCallback(const char *msg, uint8_t partition){
+      if (line1Displays[partition]) {
+        line1Displays[partition]->publish_state(msg);
     }    
-    void onSystemStatusChange(std:: function < void(const char * status, uint8_t partition) > callback) {
-      systemStatusChangeCallback = callback;
+    };
+    void line2DisplayCallback(const char * msg, uint8_t partition) {
+      if (line2Displays[partition]) {
+        line2Displays[partition]->publish_state(msg);
     }
-    void onStatusChange(std:: function < void(sysState led, bool isOpen, uint8_t partition) > callback) {
-      statusChangeCallback = callback;
+    };
+    void beepsCallback(std::string msg, uint8_t partition){
+      if (beeps[partition]) {
+        beeps[partition]->publish_state(msg);
     }
-    void onSystemMsgChange(std:: function < void(const char * msg, uint8_t partition) > callback) {
-      systemMsgChangeCallback = callback;
-    }
-    void onLrrMsgChange(std:: function < void(const char * msg) > callback) {
-      lrrMsgChangeCallback = callback;
-    }
-    void onLine1DisplayChange(std:: function < void(const char * msg, uint8_t partition) > callback) {
-      line1DisplayCallback = callback;
-    }
-    void onLine2DisplayChange(std:: function < void(const char * msg, uint8_t partition) > callback) {
-      line2DisplayCallback = callback;
-    }
-    void onBeepsChange(std:: function < void(std::string beeps, uint8_t partition) > callback) {
-      beepsCallback = callback;
-    }
-    void onZoneExtendedStatusChange(std:: function < void(std::string zoneExtendedStatus) > callback) {
-      zoneExtendedStatusCallback = callback;
-    }
-    void onRelayStatusChange(std:: function < void(uint8_t addr, int zone, bool state) > callback) {
-      relayStatusChangeCallback = callback;
-    }
-    void onRfMsgChange(std:: function < void(const char * msg) > callback) {
-      rfMsgChangeCallback = callback;
-    }
+    };
+    void statusChangeCallback(sysState led, bool bOpen, uint8_t partition)
+    {
+      
+    };
+
+    void zoneStatusChangeCallback(int zone, const char *statusCode) {};
+    void zoneStatusChangeBinaryCallback(int, bool){};    
+
+    void lrrMsgChangeCallback(const char * ){};
+    void rfMsgChangeCallback(const char * ){};
+    void zoneExtendedStatusCallback(std::string){};
+
+    void relayStatusChangeCallback(uint8_t, int, bool){};
     
     void zoneStatusUpdate(int zone, const char * msg) {
       bool open;
-      if (zoneStatusChangeCallback != NULL )
-        zoneStatusChangeCallback(zone,msg);
+      zoneStatusChangeCallback(zone,msg);
 
       std::string openVal=(std::string) msg;
       if (openVal.find("O")!=std::string::npos) //open. Possible values O,BO,AO
@@ -178,14 +165,23 @@ namespace esphome {
         open=false;
       else
         return;  //alarm/bypass we return without changing sensor. Possible values B,A 
-      if (zoneStatusChangeBinaryCallback != NULL )
-        zoneStatusChangeBinaryCallback(zone,open);
+      zoneStatusChangeBinaryCallback(zone,open);
     }
 
+    void setPartition(uint8_t partition, uint8_t keypadAddr, 
+                      text_sensor::TextSensor *systemStatus,
+                      text_sensor::TextSensor *line1Display,
+                      text_sensor::TextSensor *line2Display,
+                      text_sensor::TextSensor *beep) {
+      partitionKeypads[partition] = keypadAddr;
+      systemStatuses[partition] = systemStatus;
+      line1Displays[partition] = line1Display;
+      line2Displays[partition] = line2Display;
+      beeps[partition] = beep;
+    };
 
 
     byte debug;
-    char partitionKeypads[MAX_PARTITIONS+1];
     char keypadAddr1;
     int rxPin;
     int txPin;
@@ -223,6 +219,12 @@ namespace esphome {
     previousSystemState;
 
     private:
+    char partitionKeypads[MAX_PARTITIONS+1] = {0};
+    text_sensor::TextSensor *systemStatuses[MAX_PARTITIONS+1] = {nullptr};
+    text_sensor::TextSensor *line1Displays[MAX_PARTITIONS+1] = {nullptr};
+    text_sensor::TextSensor *line2Displays[MAX_PARTITIONS+1] = {nullptr};
+    text_sensor::TextSensor *beeps[MAX_PARTITIONS+1] = {nullptr};
+
 
       int zone;
     bool sent;
@@ -492,7 +494,7 @@ namespace esphome {
 
   void printPacket(const char * label, char cbuf[], int len) {
 
-    ESPTime rtc=now();
+    time::ESPTime rtc=now();
     char s1[4];
     char s2[25];
     std::string s="";
@@ -1143,7 +1145,7 @@ namespace esphome {
           }
 
         }
-        if (zoneStatusMsg != previousZoneStatusMsg && zoneExtendedStatusCallback != NULL)
+        if (zoneStatusMsg != previousZoneStatusMsg)
           zoneExtendedStatusCallback(zoneStatusMsg);
         previousZoneStatusMsg = zoneStatusMsg;
 
